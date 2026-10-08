@@ -111,8 +111,8 @@ Skip steps 1–2 for whisper if you will use the **OpenAI Whisper API** for tran
 ### 3. Get the code and build the app
 
 ```bash
-git clone https://github.com/sunny-github69/learn-.git
-cd learn-/MeetingNotes
+git clone https://github.com/sunny-github69/mac-tools.git
+cd mac-tools/meeting-notes
 ./scripts/build_app.sh                      # creates build/MeetingNotes.app
 cp -R build/MeetingNotes.app /Applications/ # needed for "Launch at login"
 open /Applications/MeetingNotes.app
@@ -162,7 +162,7 @@ To test speaker names, join the same meeting from a phone and talk from there.
 ### Updating
 
 ```bash
-cd learn-/MeetingNotes
+cd mac-tools/meeting-notes
 git pull
 pkill -x MeetingNotes                       # quit the running copy (ignore "no process found")
 ./scripts/build_app.sh

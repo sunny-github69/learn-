@@ -1,6 +1,7 @@
-# MeetingNotes
+# mac-tools
 
-A lightweight macOS menu-bar app that records Zoom meetings locally and writes AI meeting notes
-(summary, decisions, action items and detailed notes) with your own Claude or OpenAI API key.
+Small, lightweight macOS utilities. Each folder is a self-contained app with its own README.
 
-See [MeetingNotes/README.md](MeetingNotes/README.md) for features, screenshots and setup.
+| Tool | What it does |
+|---|---|
+| [meeting-notes](meeting-notes/README.md) | Menu-bar app that records Zoom meetings locally and writes AI meeting notes (summary, decisions, action items, detailed notes) with your own Claude or OpenAI API key. |
