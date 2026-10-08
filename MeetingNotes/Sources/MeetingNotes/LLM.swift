@@ -6,8 +6,9 @@ enum LLM {
 
     The transcript comes from speech recognition of British and Indian English speakers, so it contains \
     mishearings, missing punctuation and mangled names or technical terms. Fix them using context, but never \
-    invent facts. Speakers are labelled only "You" and "Others"; do not guess other people's names unless \
-    they are said aloud.
+    invent facts. Speaker names come from Zoom's active-speaker indicator: usually right, occasionally off by \
+    a line. "Participant" means the speaker could not be identified; do not guess who it was. Use names for \
+    decisions and action-item owners when they are clear.
 
     Reply in Markdown with exactly these sections:
     ## Summary
@@ -22,6 +23,16 @@ enum LLM {
     Long-form notes grouped by topic with ### sub-headings, in the order discussed. Keep the numbers, names, \
     reasons and trade-offs that were mentioned.
     """
+
+    static func userMessage(transcript: String, recordedBy: String, speakers: [String]) -> String {
+        """
+        Recorded by: \(recordedBy)
+        Speakers: \(speakers.joined(separator: ", "))
+
+        Transcript:
+        \(transcript)
+        """
+    }
 
     static func complete(provider: Provider, model: String, user: String) async throws -> String {
         guard let key = Keychain.get(provider.rawValue) else {

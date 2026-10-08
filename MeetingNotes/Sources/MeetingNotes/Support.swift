@@ -21,10 +21,22 @@ enum STTEngine: String, CaseIterable, Identifiable {
 
 /// Non-secret settings, shared with the views through matching @AppStorage keys.
 enum Prefs {
+    static let defaultName = NSFullUserName().split(separator: " ").first.map(String.init) ?? "Me"
     static let defaultWhisperModel =
         NSHomeDirectory() + "/Library/Application Support/MeetingNotes/ggml-large-v3-turbo-q5_0.bin"
 
     private static var defaults: UserDefaults { .standard }
+
+    static func registerDefaults() {
+        defaults.register(defaults: ["aiNotesEnabled": true, "detectSpeakers": true, "yourName": defaultName])
+    }
+
+    static var aiNotesEnabled: Bool { defaults.bool(forKey: "aiNotesEnabled") }
+    static var detectSpeakers: Bool { defaults.bool(forKey: "detectSpeakers") }
+    static var yourName: String {
+        let name = defaults.string(forKey: "yourName")?.trimmingCharacters(in: .whitespaces) ?? ""
+        return name.isEmpty ? defaultName : name
+    }
     static var provider: Provider { Provider(rawValue: defaults.string(forKey: "llmProvider") ?? "") ?? .anthropic }
     static var sttEngine: STTEngine { STTEngine(rawValue: defaults.string(forKey: "sttEngine") ?? "") ?? .local }
     static var whisperModel: String { defaults.string(forKey: "whisperModelPath") ?? defaultWhisperModel }

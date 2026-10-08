@@ -2,21 +2,22 @@ import Foundation
 
 struct Segment {
     let start: TimeInterval
-    let speaker: String
+    let end: TimeInterval
+    var speaker: String
     let text: String
 }
 
 enum Transcriber {
     /// Biases Whisper towards British / Indian English vocabulary and spelling.
     private static let hint = "A work meeting in British and Indian English, with product, engineering and business terms."
-    private typealias Raw = (start: Double, text: String)
+    private typealias Raw = (start: Double, end: Double, text: String)
 
     static func transcribe(tracks: [Track], engine: STTEngine) async throws -> [Segment] {
         var segments: [Segment] = []
         for track in tracks {
             for chunk in track.chunks {
                 let raw = engine == .local ? try await local(chunk.url) : try await openAI(chunk.url)
-                segments += raw.map { Segment(start: chunk.offset + $0.start, speaker: track.speaker, text: $0.text) }
+                segments += raw.map { Segment(start: chunk.offset + $0.start, end: chunk.offset + $0.end, speaker: track.speaker, text: $0.text) }
             }
         }
         return segments.filter { !$0.text.isEmpty }.sorted { $0.start < $1.start }
@@ -64,8 +65,9 @@ enum Transcriber {
         return segments.compactMap { seg in
             // Whisper invents text on silence; drop segments it itself flags as non-speech.
             guard (seg["no_speech_prob"] as? Double ?? 0) < 0.6,
-                  let start = seg["start"] as? Double, let text = seg["text"] as? String else { return nil }
-            return (start, text.trimmingCharacters(in: .whitespaces))
+                  let start = seg["start"] as? Double, let end = seg["end"] as? Double,
+                  let text = seg["text"] as? String else { return nil }
+            return (start, end, text.trimmingCharacters(in: .whitespaces))
         }
     }
 
@@ -97,7 +99,7 @@ enum Transcriber {
 
         struct Output: Decodable {
             struct Seg: Decodable {
-                struct Offsets: Decodable { let from: Int }
+                struct Offsets: Decodable { let from: Int; let to: Int }
                 let offsets: Offsets
                 let text: String
             }
@@ -105,7 +107,7 @@ enum Transcriber {
         }
         let data = try Data(contentsOf: URL(fileURLWithPath: outBase + ".json"))
         return try JSONDecoder().decode(Output.self, from: data).transcription.map {
-            (Double($0.offsets.from) / 1000, $0.text.trimmingCharacters(in: .whitespaces))
+            (Double($0.offsets.from) / 1000, Double($0.offsets.to) / 1000, $0.text.trimmingCharacters(in: .whitespaces))
         }
     }
 }

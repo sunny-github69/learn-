@@ -2,6 +2,9 @@ import AVFoundation
 import ScreenCaptureKit
 
 struct Track {
+    static let you = "You"
+    static let others = "Others"
+
     let speaker: String
     let chunks: [ChunkedWavWriter.Chunk]
 }
@@ -92,6 +95,18 @@ private extension CMSampleBuffer {
             self, at: 0, frameCount: Int32(frames), into: buffer.mutableAudioBufferList)
         return status == noErr ? buffer : nil
     }
+
+    var completeFrame: CVPixelBuffer? {
+        guard let info = (CMSampleBufferGetSampleAttachmentsArray(self, createIfNecessary: false)
+                as? [[SCStreamFrameInfo: Any]])?.first,
+              let status = info[.status] as? Int, SCFrameStatus(rawValue: status) == .complete else { return nil }
+        return imageBuffer
+    }
+}
+
+struct Recording {
+    let tracks: [Track]
+    let speakers: [SpeakerDetector.Sample]
 }
 
 /// Captures Zoom's audio (the other participants) through ScreenCaptureKit and your microphone
@@ -103,50 +118,64 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let engine = AVAudioEngine()
     private var others: ChunkedWavWriter?
     private var mine: ChunkedWavWriter?
+    private var detector: SpeakerDetector?
 
-    func start(into dir: URL) async throws {
+    func start(into dir: URL, detectSpeakers: Bool, onSpeaker: @escaping @MainActor (String?) -> Void) async throws {
         guard await AVCaptureDevice.requestAccess(for: .audio) else {
             throw AppError("Microphone access denied. Enable it in System Settings → Privacy & Security.")
         }
         let started = Date()
         others = ChunkedWavWriter(dir: dir, name: "others", sessionStart: started)
         mine = ChunkedWavWriter(dir: dir, name: "you", sessionStart: started)
-        try await startSystemAudio()
+        detector = detectSpeakers ? SpeakerDetector(sessionStart: started, onChange: onSpeaker) : nil
+        try await startCapture()
         try startMicrophone()
     }
 
-    func stop() async -> [Track] {
+    func stop() async -> Recording {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         try? await stream?.stopCapture()
         stream = nil
-        return [Track(speaker: "Others", chunks: others?.finish() ?? []),
-                Track(speaker: "You", chunks: mine?.finish() ?? [])]
+        return Recording(
+            tracks: [Track(speaker: Track.others, chunks: others?.finish() ?? []),
+                     Track(speaker: Track.you, chunks: mine?.finish() ?? [])],
+            speakers: detector?.finish() ?? [])
     }
 
-    private func startSystemAudio() async throws {
+    private func startCapture() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let display = content.displays.first else { throw AppError("No display found.") }
-        // Only Zoom's audio when it is running; otherwise fall back to all system audio.
-        let filter: SCContentFilter
-        if let zoom = content.applications.first(where: { $0.bundleIdentifier == Self.zoomBundleID }) {
-            filter = SCContentFilter(display: display, including: [zoom], exceptingWindows: [])
-        } else {
-            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-        }
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.excludesCurrentProcessAudio = true
         config.sampleRate = 48_000
         config.channelCount = 1
-        config.width = 2  // we only want audio; keep the unavoidable video stream tiny
-        config.height = 2
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)  // 1 fps is plenty for speaker detection
+        config.showsCursor = false
 
-        let queue = DispatchQueue(label: "system-audio")
+        // Only Zoom's audio and windows when it is running; otherwise all system audio and no speaker detection.
+        let filter: SCContentFilter
+        if let zoom = content.applications.first(where: { $0.bundleIdentifier == Self.zoomBundleID }) {
+            filter = SCContentFilter(display: display, including: [zoom], exceptingWindows: [])
+        } else {
+            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+            detector = nil
+        }
+        if detector != nil {
+            // Retina-sharp name labels for OCR, capped so the per-frame pixel scan stays cheap.
+            let scale = min(2, 2560 / Double(display.width))
+            config.width = Int(Double(display.width) * scale)
+            config.height = Int(Double(display.height) * scale)
+            config.pixelFormat = kCVPixelFormatType_32BGRA
+        } else {
+            config.width = 2  // audio only; keep the unavoidable video stream tiny
+            config.height = 2
+        }
+
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "zoom-frames"))
+        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: DispatchQueue(label: "system-audio"))
         try await stream.startCapture()
         self.stream = stream
     }
@@ -160,8 +189,15 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer buffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .audio, buffer.isValid, let pcm = buffer.pcmBuffer() else { return }
-        others?.append(pcm)
+        guard buffer.isValid else { return }
+        switch type {
+        case .audio:
+            if let pcm = buffer.pcmBuffer() { others?.append(pcm) }
+        case .screen:
+            if let detector, let frame = buffer.completeFrame { detector.process(frame) }
+        default:
+            break
+        }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
