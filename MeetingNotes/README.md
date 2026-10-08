@@ -1,21 +1,84 @@
 # MeetingNotes
 
-A light menu-bar Mac app that records a Zoom meeting **locally** and writes summary + long notes.
-It does not join the call as a bot, so Zoom shows nothing to other participants.
+A free, open-source, lightweight macOS menu-bar app that records a Zoom meeting **locally** and turns
+it into a short summary plus long, detailed notes, using your own Claude or OpenAI API key.
 
-- **Others' audio**: captured from the Zoom app only (ScreenCaptureKit). **Your voice**: microphone.
-- **Who said what**: in Zoom's Gallery view the active speaker gets a green border. About once a second
-  the app finds that border in the Zoom window and reads the name label with on-device OCR (Vision),
-  so the transcript says `Albert Dow:` instead of `Others:`. Frames are never saved.
-  If Zoom is minimised or on another Space, audio keeps recording, those lines are labelled
-  `Not recognised`, and detection resumes by itself when the window is back. Zoom covered by other
-  windows should still be detected.
-- **Transcription**: free local `whisper.cpp`, or the OpenAI Whisper API. Forced to English with a
-  British/Indian-English prompt hint.
-- **Notes**: your own Claude or OpenAI key (stored in the Keychain). The model list is fetched live from
-  the provider's `/models` endpoint, so new models show up without an app update.
-- **Output**: `~/Documents/MeetingNotes/<date time>/notes.md` (Summary, Decisions, Action items,
-  Open questions, Detailed notes) and `transcript.md`. Raw audio is deleted once notes are written.
+It does not join the call as a bot and adds nothing to the meeting, so Zoom does not notify other
+participants. Recording laws differ by country and company. See [Responsible use](#responsible-use).
+
+| Menu bar | Settings |
+|---|---|
+| <img src="docs/menu.png" width="360" alt="Menu-bar popover with Start recording and quick switches"> | <img src="docs/settings-general.png" width="400" alt="Settings window, General tab"> |
+
+## Features
+
+- **Records locally:** Zoom's audio (the other participants) through ScreenCaptureKit, and your voice
+  through the microphone. Nothing leaves your Mac except the transcript sent to the AI provider you pick.
+- **British and Indian English:** Whisper transcription is fixed to English with an accent and
+  vocabulary hint, and the AI is told to fix obvious mishearings from context.
+- **Who said what:** in Zoom's Gallery view the active speaker gets a green border. About once a second
+  the app finds that border in the Zoom window and reads the name label with on-device OCR (Apple
+  Vision), so the transcript says `Priya Sharma:` instead of `Others:`. Frames are never saved.
+- **Audio-only fallback:** if Zoom is minimised or on another Space, recording carries on, those lines
+  are labelled `Not recognised`, and speaker detection resumes on its own when the window is back.
+- **Bring your own AI:** Claude (Anthropic) or ChatGPT (OpenAI). The model list is fetched live from the
+  provider, so new models appear without an app update. Keys are kept in the macOS Keychain.
+- **Free transcription:** offline `whisper.cpp`, or the OpenAI Whisper API if you prefer.
+- **Hands-free:** optional auto-record when a Zoom meeting starts, launch at login, and a macOS
+  notification when the notes are ready.
+
+## Example output
+
+Each meeting gets a folder in `~/Documents/MeetingNotes/<date time>/`. The example below is fictional.
+
+`transcript.md`
+
+```text
+[00:04] Alex: Morning all. Quick one today, the release plan and the login bug.
+
+[00:11] Priya Sharma: So the fix is merged, but QA found one more edge case with expired sessions.
+
+[00:24] James Carter: Can we still ship on Thursday, or do we push to Monday?
+
+[00:31] Not recognised: I think Thursday is fine if QA signs off by Wednesday evening.
+```
+
+`notes.md`
+
+```markdown
+## Summary
+- Login bug fix is merged; one edge case with expired sessions remains.
+- Release stays on Thursday if QA signs off by Wednesday evening.
+
+## Decisions
+- Keep the Thursday release date, conditional on QA sign-off.
+
+## Action items
+- [ ] Fix the expired-session edge case (Priya Sharma, Wednesday)
+- [ ] QA sign-off on the release build (QA team, Wednesday evening)
+
+## Open questions
+- Who owns the rollback plan if sign-off slips?
+
+## Detailed notes
+### Login bug
+Priya confirmed the fix is merged. QA reproduced one more case where an expired session ...
+
+### Release plan
+James asked whether Thursday is still realistic ...
+```
+
+## How it works
+
+```text
+Zoom audio ─┐                       ┌─ whisper.cpp (local, free) ─┐
+            ├─ 16 kHz WAV chunks ───┤                             ├─ transcript.md ─ Claude / GPT ─ notes.md
+Microphone ─┘                       └─ OpenAI Whisper API ────────┘        ▲
+Zoom window frames (1 fps) ─ green border + OCR ─ speaker timeline ───────┘
+```
+
+Audio is written in 10-minute chunks (each stays under the Whisper API's 25 MB limit) and deleted once
+the notes are written. It is kept only when something fails, so you can press **Retry**.
 
 ## Setting up on a new Mac
 
@@ -48,7 +111,7 @@ Skip steps 1–2 for whisper if you will use the **OpenAI Whisper API** for tran
 ### 3. Get the code and build the app
 
 ```bash
-git clone -b claude/zoom-meeting-summary-app-9m0wgv https://github.com/sunny-github69/learn-.git
+git clone https://github.com/sunny-github69/learn-.git
 cd learn-/MeetingNotes
 ./scripts/build_app.sh                      # creates build/MeetingNotes.app
 cp -R build/MeetingNotes.app /Applications/ # needed for "Launch at login"
@@ -57,11 +120,16 @@ open /Applications/MeetingNotes.app
 
 A waveform icon appears in the menu bar (top right). There is no Dock icon; that is expected.
 
+> Keep the repo out of iCloud Drive / OneDrive / Dropbox folders: the build creates thousands of
+> files in `.build/` and the sync client will slow it down.
+
 ### 4. Configure
 
-Click the menu-bar icon → ⚙︎:
+Click the menu-bar icon, then the ⚙︎ button in the top-right corner of the popover:
 
-- **AI notes**: pick Claude or ChatGPT, paste your API key. It is checked live ("Key works · N models")
+- **AI notes**: pick Claude or ChatGPT, paste your API key (create one at
+  [console.anthropic.com](https://console.anthropic.com) or
+  [platform.openai.com](https://platform.openai.com/api-keys)). It is checked live ("Key works · N models")
   and the model list loads; pick a model. Keys are stored in the macOS Keychain, never in files.
   Turn AI notes off to save only the transcript.
 - **General**: *Launch at login*, *Auto-record when a Zoom meeting starts*, your name (used instead
@@ -70,23 +138,36 @@ Click the menu-bar icon → ⚙︎:
 
 The three main switches (auto-record, speakers, AI notes) are also in the menu-bar popover.
 
-### 5. Grant permissions (first recording)
+### 5. Grant permissions and do a test recording
 
-Join a test Zoom meeting and press **Start recording**. macOS asks for:
+1. Start a Zoom meeting (alone is fine) and switch to **Gallery view**. Use headphones.
+2. Press **Start recording**. macOS asks for:
 
-- **Microphone** → Allow.
-- **Screen & System Audio Recording** → open System Settings → Privacy & Security → enable
-  *MeetingNotes*. macOS may ask you to quit and reopen the app; do so and start again.
+   - **Microphone** → Allow.
+   - **Screen & System Audio Recording** → open System Settings → Privacy & Security → enable
+     *MeetingNotes*. macOS may ask you to quit and reopen the app; do so and start again.
+3. While recording, the popover shows a timer and who is speaking, e.g. "Priya Sharma is speaking".
+   Minimise Zoom and it switches to "Zoom not visible – notes from audio only".
+4. Press **Stop & write notes**. When the notification arrives, click it (or **Open**) to read the notes.
 
-Speak for a minute, press **Stop & write notes**, then **Open**. The files are in
-`~/Documents/MeetingNotes/<date time>/`.
+To test speaker names, join the same meeting from a phone and talk from there.
+
+### Daily use
+
+- **Manual:** menu-bar icon → **Start recording** → **Stop & write notes**.
+- **Automatic:** turn on **Auto-record Zoom meetings**. Recording starts when you join a meeting and
+  the notes are written when you leave. Pressing Stop mid-meeting stops it for that meeting.
+- Past meetings are listed under **Recent** in the popover; **Open notes folder** shows all of them.
 
 ### Updating
 
 ```bash
 cd learn-/MeetingNotes
 git pull
-./scripts/build_app.sh && rm -rf /Applications/MeetingNotes.app && cp -R build/MeetingNotes.app /Applications/
+pkill -x MeetingNotes                       # quit the running copy (ignore "no process found")
+./scripts/build_app.sh
+rm -rf /Applications/MeetingNotes.app
+cp -R build/MeetingNotes.app /Applications/
 open /Applications/MeetingNotes.app
 ```
 
@@ -98,6 +179,7 @@ allow it again. Settings and API keys are kept.
 
 | Problem | Fix |
 |---|---|
+| `cd: no such file or directory` | Run the commands from the folder you cloned into (`pwd` shows where you are). |
 | `swift: command not found` | `xcode-select --install`, then open a new terminal. |
 | "whisper-cli not found" | `brew install whisper-cpp` |
 | "Whisper model not found" | Redo step 2, or fix the path in Settings → Transcription. |
@@ -119,11 +201,24 @@ Meeting notes in `~/Documents/MeetingNotes` are left alone.
 The app watches for Zoom's `CptHost` helper process, which exists only during a meeting: recording
 starts when you join and the notes are written when you leave.
 
-## Notes
+## Limitations
 - Speaker names need Gallery view and the Zoom window visible (not minimised). Speaker view has no
   green border, so those lines fall back to `Not recognised`.
 - Start Zoom before recording: then only Zoom's audio is captured. Otherwise it falls back to all system audio
   and speaker names are off.
 - Use headphones, otherwise Zoom audio leaks into your mic and gets transcribed twice.
-- Recording laws differ by country/state (some require every participant's consent). Check your
-  jurisdiction and your company policy before recording without telling people.
+- Speaker names come from OCR of Zoom's UI and can lag by a line, or misread an unusual name.
+- Zoom must be on the main display.
+
+## Responsible use
+
+You are responsible for how you use this app. Recording laws differ by country and state (some require
+every participant's consent), and many employers have recording policies. Check both before recording
+a meeting without telling people.
+
+## Privacy
+
+- Audio and Zoom frames are processed on your Mac. Frames are never written to disk.
+- The transcript is sent only to the AI provider you choose (and, if you pick the OpenAI Whisper API,
+  the audio is uploaded to OpenAI).
+- API keys are stored in the macOS Keychain, not in files or in this repository.
