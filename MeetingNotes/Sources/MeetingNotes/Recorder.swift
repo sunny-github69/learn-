@@ -120,15 +120,15 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var mine: ChunkedWavWriter?
     private var detector: SpeakerDetector?
 
-    func start(into dir: URL, detectSpeakers: Bool, onSpeaker: @escaping @MainActor (String?) -> Void) async throws {
+    func start(into dir: URL, detectSpeakers: Bool,
+               onSpeaker: @escaping @MainActor (SpeakerDetector.Status) -> Void) async throws {
         guard await AVCaptureDevice.requestAccess(for: .audio) else {
             throw AppError("Microphone access denied. Enable it in System Settings → Privacy & Security.")
         }
         let started = Date()
         others = ChunkedWavWriter(dir: dir, name: "others", sessionStart: started)
         mine = ChunkedWavWriter(dir: dir, name: "you", sessionStart: started)
-        detector = detectSpeakers ? SpeakerDetector(sessionStart: started, onChange: onSpeaker) : nil
-        try await startCapture()
+        try await startCapture(sessionStart: started, detectSpeakers: detectSpeakers, onSpeaker: onSpeaker)
         try startMicrophone()
     }
 
@@ -143,7 +143,8 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
             speakers: detector?.finish() ?? [])
     }
 
-    private func startCapture() async throws {
+    private func startCapture(sessionStart: Date, detectSpeakers: Bool,
+                              onSpeaker: @escaping @MainActor (SpeakerDetector.Status) -> Void) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let display = content.displays.first else { throw AppError("No display found.") }
         let config = SCStreamConfiguration()
@@ -156,11 +157,14 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
         // Only Zoom's audio and windows when it is running; otherwise all system audio and no speaker detection.
         let filter: SCContentFilter
+        detector = nil
         if let zoom = content.applications.first(where: { $0.bundleIdentifier == Self.zoomBundleID }) {
             filter = SCContentFilter(display: display, including: [zoom], exceptingWindows: [])
+            if detectSpeakers {
+                detector = SpeakerDetector(sessionStart: sessionStart, zoomPID: zoom.processID, onChange: onSpeaker)
+            }
         } else {
             filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-            detector = nil
         }
         if detector != nil {
             // Retina-sharp name labels for OCR, capped so the per-frame pixel scan stays cheap.

@@ -1,3 +1,4 @@
+import CoreGraphics
 import CoreVideo
 import Foundation
 import Vision
@@ -5,36 +6,88 @@ import Vision
 /// Works out who is talking from Zoom's own UI: in Gallery view Zoom draws a green border around the
 /// active speaker's tile, and the participant's name sits in that tile's bottom-left corner.
 /// Frames are analysed in memory about once a second and never saved.
+///
+/// When the Zoom window is minimised or on another Space, detection pauses (the notes then rely on audio
+/// alone and those lines are labelled "Not recognised") and resumes as soon as the window is back.
 final class SpeakerDetector {
+    static let unknownSpeaker = "Not recognised"
+
+    enum Status: Equatable {
+        case speaking(String)
+        case noHighlight  // Zoom visible, but no green border (Speaker view, or nobody talking)
+        case zoomHidden
+    }
+
     struct Sample {
         let time: TimeInterval  // seconds from the start of the meeting
         let name: String
     }
 
     private let sessionStart: Date
-    private let onChange: @MainActor (String?) -> Void
+    private let zoomPID: pid_t
+    private let onChange: @MainActor (Status) -> Void
     private let queue = DispatchQueue(label: "speaker-detector")
     private var samples: [Sample] = []
-    private var current: String?
+    private var status: Status = .noHighlight
+    private var visibilityTimer: DispatchSourceTimer?
 
-    init(sessionStart: Date, onChange: @escaping @MainActor (String?) -> Void) {
+    init(sessionStart: Date, zoomPID: pid_t, onChange: @escaping @MainActor (Status) -> Void) {
         self.sessionStart = sessionStart
+        self.zoomPID = zoomPID
         self.onChange = onChange
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: 2)
+        timer.setEventHandler { [weak self] in self?.checkVisibility() }
+        timer.resume()
+        visibilityTimer = timer
     }
 
     func process(_ frame: CVPixelBuffer) {
         let time = Date().timeIntervalSince(sessionStart)
         queue.async { [self] in
-            let name = Self.activeTile(in: frame).flatMap { Self.readName(in: frame, tile: $0) }
-            if let name { samples.append(Sample(time: time, name: name)) }
-            guard name != current else { return }
-            current = name
-            Task { @MainActor [onChange] in onChange(name) }
+            guard status != .zoomHidden else { return }
+            if let name = Self.activeTile(in: frame).flatMap({ Self.readName(in: frame, tile: $0) }) {
+                samples.append(Sample(time: time, name: name))
+                update(.speaking(name))
+            } else {
+                update(.noHighlight)
+            }
         }
     }
 
     func finish() -> [Sample] {
-        queue.sync { samples }
+        queue.sync {
+            visibilityTimer?.cancel()
+            visibilityTimer = nil
+            return samples
+        }
+    }
+
+    private func checkVisibility() {
+        if !Self.hasVisibleWindow(pid: zoomPID) {
+            update(.zoomHidden)
+        } else if status == .zoomHidden {
+            update(.noHighlight)  // back on screen: the next frame resumes detection
+        }
+    }
+
+    private func update(_ new: Status) {
+        guard new != status else { return }
+        status = new
+        Task { @MainActor [onChange] in onChange(new) }
+    }
+
+    /// True when Zoom has a meeting-sized window on the current screen. Windows merely covered by other
+    /// apps still count: ScreenCaptureKit captures them anyway because the filter includes only Zoom.
+    private static func hasVisibleWindow(pid: pid_t) -> Bool {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        return windows.contains { window in
+            guard window[kCGWindowOwnerPID as String] as? pid_t == pid,
+                  window[kCGWindowLayer as String] as? Int == 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: CGFloat] else { return false }
+            return (bounds["Width"] ?? 0) > 400 && (bounds["Height"] ?? 0) > 300
+        }
     }
 
     /// The name seen most often while a segment was spoken. Zoom moves the border about a second

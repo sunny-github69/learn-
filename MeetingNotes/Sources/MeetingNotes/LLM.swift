@@ -7,7 +7,7 @@ enum LLM {
     The transcript comes from speech recognition of British and Indian English speakers, so it contains \
     mishearings, missing punctuation and mangled names or technical terms. Fix them using context, but never \
     invent facts. Speaker names come from Zoom's active-speaker indicator: usually right, occasionally off by \
-    a line. "Participant" means the speaker could not be identified; do not guess who it was. Use names for \
+    a line. "Not recognised" means the speaker could not be identified; do not guess who it was. Use names for \
     decisions and action-item owners when they are clear.
 
     Reply in Markdown with exactly these sections:

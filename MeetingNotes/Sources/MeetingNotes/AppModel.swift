@@ -19,7 +19,7 @@ final class AppModel: ObservableObject {
     }
 
     @Published private(set) var state: State = .idle
-    @Published private(set) var currentSpeaker: String?
+    @Published private(set) var speakerStatus: SpeakerDetector.Status?
     @Published private(set) var recent: [Meeting] = []
     @Published private(set) var models: [String] = []
     @Published private(set) var modelsLoading = false
@@ -66,8 +66,8 @@ final class AppModel: ObservableObject {
         let dir = Self.notesRoot.appendingPathComponent(Self.folderFormat.string(from: Date()))
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try await recorder.start(into: dir, detectSpeakers: Prefs.detectSpeakers) { [weak self] name in
-                self?.currentSpeaker = name
+            try await recorder.start(into: dir, detectSpeakers: Prefs.detectSpeakers) { [weak self] status in
+                self?.speakerStatus = status
             }
             session = (dir, nil)
             autoStarted = auto
@@ -84,7 +84,7 @@ final class AppModel: ObservableObject {
         guard let dir = session?.dir, isRecording else { return }
         ignoreCurrentMeeting = true
         session = (dir, await recorder.stop())
-        currentSpeaker = nil
+        speakerStatus = nil
         await process()
     }
 
@@ -127,11 +127,12 @@ final class AppModel: ObservableObject {
     }
 
     /// Replaces the track label with your name, or with whoever Zoom showed as the active speaker.
+    /// Lines spoken while Zoom was hidden (or with no highlight) have no sample and stay unrecognised.
     private func name(_ segment: Segment, using speakers: [SpeakerDetector.Sample]) -> Segment {
         var segment = segment
         segment.speaker = segment.speaker == Track.you
             ? Prefs.yourName
-            : SpeakerDetector.dominantSpeaker(in: speakers, from: segment.start, to: segment.end) ?? "Participant"
+            : SpeakerDetector.dominantSpeaker(in: speakers, from: segment.start, to: segment.end) ?? SpeakerDetector.unknownSpeaker
         return segment
     }
 

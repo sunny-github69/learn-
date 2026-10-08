@@ -98,12 +98,7 @@ struct MenuView: View {
                     Text(since, style: .timer).font(.title3.monospacedDigit())
                     Spacer()
                 }
-                if detectSpeakers {
-                    Label(model.currentSpeaker.map { "\($0) is speaking" } ?? "Listening…",
-                          systemImage: "person.wave.2")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+                if detectSpeakers { speakerLine.font(.callout) }
                 wideButton("Stop & write notes", icon: "stop.fill") { await model.stop() }
             case .processing(let message):
                 HStack(spacing: 8) {
@@ -127,6 +122,20 @@ struct MenuView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder private var speakerLine: some View {
+        switch model.speakerStatus {
+        case .speaking(let name):
+            Label("\(name) is speaking", systemImage: "person.wave.2").foregroundStyle(.secondary)
+        case .noHighlight:
+            Label("Looking for the active speaker (use Gallery view)", systemImage: "person.crop.rectangle")
+                .foregroundStyle(.secondary)
+        case .zoomHidden:
+            Label("Zoom not visible – notes from audio only", systemImage: "eye.slash").foregroundStyle(.orange)
+        case nil:
+            Label("Listening…", systemImage: "waveform").foregroundStyle(.secondary)
+        }
     }
 
     private var recentMeetings: some View {
@@ -207,7 +216,7 @@ struct GeneralSettings: View {
                 TextField("Your name", text: $yourName)
                 Toggle("Identify who is speaking from the Zoom window", isOn: $detectSpeakers)
             } footer: {
-                Text("Use Zoom's Gallery view and keep the Zoom window on screen. Frames are analysed in memory about once a second and never saved.")
+                Text("Use Zoom's Gallery view and keep the Zoom window on screen. Frames are analysed in memory about once a second and never saved. If Zoom is minimised, notes come from audio alone (\"Not recognised\") and detection resumes when it is back.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
